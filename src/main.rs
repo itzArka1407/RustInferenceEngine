@@ -1,6 +1,8 @@
 use anyhow::Result;
 use candle_core::{Device, Tensor};
 
+mod tests;
+
 fn main() -> Result<()> {
     // FIXME: For now, using CPU because the host machine doesn't have cuda-toolkit
     let a = Tensor::new(&[[1., 2.], [3., 4.], [4., 6.]], &Device::Cpu)?;
