@@ -31,3 +31,23 @@ fn test_tensors() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+// Simplied linear operations on models -- Y = XW + B
+// Output = input * weight + bias
+#[test]
+fn linear_operations() -> anyhow::Result<()> {
+    let x = Tensor::new(&[[1., 3.], [2., 5.]], &Device::Cpu)?; // Replicate a [2,2] input
+    let w = Tensor::new(&[[2., 3., 1.], [5., 1., 9.]], &Device::Cpu)?; // Replicate a [2, 3] weight
+    let b = Tensor::new(&[4., 11., 16.3], &Device::Cpu)?; // The bias of the operation
+
+    let final_output = x.matmul(&w)?.broadcast_add(&b)?;
+    println!("X: {:?} | Sh: {:?}", x.to_vec2::<f64>()?, x.shape());
+    println!("W: {:?} | Sh: {:?}", w.to_vec2::<f64>()?, w.shape());
+    println!("B: {:?} | Sh: {:?}", b.to_vec1::<f64>()?, b.shape());
+    println!(
+        "final: {:?} | Sh: {:?}",
+        final_output.to_vec2::<f64>()?,
+        final_output.shape()
+    );
+    Ok(())
+}

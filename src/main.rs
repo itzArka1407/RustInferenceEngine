@@ -1,6 +1,7 @@
 use anyhow::Result;
 use candle_core::{Device, Tensor};
 
+#[cfg(test)]
 mod tests;
 
 fn main() -> Result<()> {
