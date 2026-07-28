@@ -1,3 +1,4 @@
+use anyhow::Result;
 use candle_core::{Device, Tensor};
 
 #[test]
@@ -49,5 +50,44 @@ fn linear_operations() -> anyhow::Result<()> {
         final_output.to_vec2::<f64>()?,
         final_output.shape()
     );
+    Ok(())
+}
+
+// Simplified relu logic
+#[test]
+fn activation_relu() -> Result<()> {
+    let tensor = Tensor::new(&[100., 3., -1., -54., -11.7], &Device::Cpu)?;
+
+    // simple relu operations on tensor
+    let mut inner_data = tensor.to_vec1::<f64>()?;
+    for data in inner_data.iter_mut() {
+        *data = data.max(0.);
+    }
+    let new_tensor = Tensor::new(&*inner_data, &Device::Cpu)?;
+    println!("{:?}", new_tensor.to_vec1::<f64>()?);
+
+    Ok(())
+}
+
+/// Simplified embedding logic
+#[test]
+fn embedding_lookup() -> Result<()> {
+    // Set of testing embeddings to be tried out for testing
+    let embeddings = Tensor::new(
+        &[
+            [0.2, 0.5, 0.1], // cat
+            [0.8, 0.4, 0.9], // dog
+            [0.1, 0.7, 0.3], // fish
+            [0.9, 0.2, 0.8], // Rust
+            [0.5, 0.6, 0.4], // AI
+        ],
+        &Device::Cpu,
+    )?;
+
+    let tokens = Tensor::new(&[3u32, 4], &Device::Cpu)?;
+    let final_tensor = embeddings.index_select(&tokens, 0)?;
+
+    println!("{:?}", final_tensor.to_vec2::<f64>()?);
+
     Ok(())
 }
