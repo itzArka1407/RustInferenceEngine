@@ -16,8 +16,9 @@ fn test_tensors() -> anyhow::Result<()> {
     println!("s: {s:?}");
 
     let c = a.matmul(&b)?;
-    let d = c.transpose(0, 1)?;
-    let e = c.unsqueeze(0)?;
+    let d = c.transpose(0, 1)?; // Swap axis 0 with 1
+    let e = c.unsqueeze(0)?; // Operate on axis 0(outermost: x in shape: [x,y,...]) -> if x = 1,
+    // remove it
     let f = e.squeeze(0)?; // c.squeeze(0) works same bcoz axis 0 for c isn't of size: 1 -- squeeze
     // only works if size of target axis = 1
     let g = c.narrow(1, 1, 2)?;
@@ -149,6 +150,30 @@ fn query_key_value() -> Result<()> {
         println!("{:?}", K.to_vec2::<f64>()?);
         println!("{:?}", V.to_vec2::<f64>()?);
     }
+
+    Ok(())
+}
+
+// Mock demonstration of attention scores calculation
+#[test]
+fn attention_scores() -> Result<()> {
+    // Mock input -- each inner array is an embedded data of an input token
+    let x = Tensor::new(&[[1., 2.], [3., 4.]], &Device::Cpu)?;
+
+    // Mock weights of query and key
+    let wq = Tensor::new(&[[5., 6.], [2., 1.]], &Device::Cpu)?;
+    let wk = Tensor::new(&[[1.3, 3.2], [5.21, 9.33]], &Device::Cpu)?;
+
+    // Get the query and key
+    let q = x.matmul(&wq)?;
+    let k = x.matmul(&wk)?;
+    // Attention Scores(A) = Q*K(transpose) -- transpose to convert the dimensions to allow
+    // multiplication(no change in data)
+    let attention_scores = q.matmul(&k.transpose(0, 1)?)?;
+
+    println!("Q: {:?}", q.to_vec2::<f64>()?);
+    println!("K: {:?}", k.to_vec2::<f64>()?);
+    println!("A: {:?}", attention_scores.to_vec2::<f64>()?);
 
     Ok(())
 }
