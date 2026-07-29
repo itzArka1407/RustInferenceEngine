@@ -125,3 +125,30 @@ fn positional_embeddings() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn query_key_value() -> Result<()> {
+    // Mock input vector from tokens
+    let x = Tensor::new(&[[1., 2.], [3., 4.]], &Device::Cpu)?;
+
+    // Mock query, key, value weight embeddings
+    let wq = Tensor::new(&[[1.1, 4.1], [0.4, 6.2]], &Device::Cpu)?;
+    let wk = Tensor::new(&[[0.5, 2.1], [1.6, 2.2]], &Device::Cpu)?;
+    let wv = Tensor::new(&[[1.8, 9.1], [0.3, 7.8]], &Device::Cpu)?;
+
+    // Multiply with the weight vectors to get the different vectors of:
+    // Query, Key, Value
+    #[allow(non_snake_case)]
+    {
+        // Different linear projections on the input vector based on different weight vectors
+        let Q = x.matmul(&wq)?;
+        let K = x.matmul(&wk)?;
+        let V = x.matmul(&wv)?;
+
+        println!("{:?}", Q.to_vec2::<f64>()?);
+        println!("{:?}", K.to_vec2::<f64>()?);
+        println!("{:?}", V.to_vec2::<f64>()?);
+    }
+
+    Ok(())
+}
