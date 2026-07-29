@@ -22,13 +22,16 @@ fn test_tensors() -> anyhow::Result<()> {
     let f = e.squeeze(0)?; // c.squeeze(0) works same bcoz axis 0 for c isn't of size: 1 -- squeeze
     // only works if size of target axis = 1
     let g = c.narrow(1, 1, 2)?;
+    let h = c.affine(2.0, 0.0)?; // affine(&self, scale, bias) ->  self * scale + bias
+
     println!(
-        "c: {0:?}\nd: {1:?}\ne: {2:?}\nf: {3:?}\ng: {4:?}",
+        "c: {0:?}\nd: {1:?}\ne: {2:?}\nf: {3:?}\ng: {4:?}\nh: {5:?}",
         c.to_vec2::<f64>()?,
         d.to_vec2::<f64>()?,
         e.to_vec3::<f64>()?,
         f.to_vec2::<f64>()?,
-        g.to_vec2::<f64>()?
+        g.to_vec2::<f64>()?,
+        h.to_vec2::<f64>()?,
     );
 
     Ok(())
@@ -155,8 +158,7 @@ fn query_key_value() -> Result<()> {
 }
 
 // Mock demonstration of attention scores calculation
-#[test]
-fn attention_scores() -> Result<()> {
+fn attention_scores() -> Result<(Tensor, Tensor)> {
     // Mock input -- each inner array is an embedded data of an input token
     let x = Tensor::new(&[[1., 2.], [3., 4.]], &Device::Cpu)?;
 
@@ -175,5 +177,17 @@ fn attention_scores() -> Result<()> {
     println!("K: {:?}", k.to_vec2::<f64>()?);
     println!("A: {:?}", attention_scores.to_vec2::<f64>()?);
 
+    Ok((q, attention_scores))
+}
+
+// Apply softmaxing on attention scores
+#[test]
+fn scaled_dot_product_attention() -> Result<()> {
+    let (q, scores) = attention_scores()?;
+    let dk = q.dims2()?.1 as f64; // Get the no. of embeddings' per token value
+    // Scale attention scores by 1/sqrt(d_k) to keep their magnitude
+    // stable before softmax and avoid softmax saturation during training.
+    let scaled_scores = scores.affine(1.0 / dk.sqrt(), 0.0)?;
+    println!("Scaled Scores: {:?}", scaled_scores.to_vec2::<f64>()?);
     Ok(())
 }
