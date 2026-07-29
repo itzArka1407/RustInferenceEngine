@@ -1,5 +1,6 @@
 use anyhow::Result;
 use candle_core::{Device, Tensor};
+use candle_nn::ops::softmax;
 
 #[test]
 fn test_tensors() -> anyhow::Result<()> {
@@ -157,8 +158,11 @@ fn query_key_value() -> Result<()> {
     Ok(())
 }
 
+// NOTE: The following metrics used for attention scores are fairly large, doesn't happen irl --
+// used to track the variation of attention weights based on attention scores
+
 // Mock demonstration of attention scores calculation
-fn attention_scores() -> Result<(Tensor, Tensor)> {
+fn attention_scores() -> Result<(Tensor, Tensor, Tensor)> {
     // Mock input -- each inner array is an embedded data of an input token
     let x = Tensor::new(&[[1., 2.], [3., 4.]], &Device::Cpu)?;
 
@@ -177,17 +181,31 @@ fn attention_scores() -> Result<(Tensor, Tensor)> {
     println!("K: {:?}", k.to_vec2::<f64>()?);
     println!("A: {:?}", attention_scores.to_vec2::<f64>()?);
 
-    Ok((q, attention_scores))
+    Ok((x, q, attention_scores))
 }
 
 // Apply softmaxing on attention scores
 #[test]
-fn scaled_dot_product_attention() -> Result<()> {
-    let (q, scores) = attention_scores()?;
+fn softmaxed_attention_scores() -> Result<()> {
+    let (x, q, scores) = attention_scores()?;
     let dk = q.dims2()?.1 as f64; // Get the no. of embeddings' per token value
     // Scale attention scores by 1/sqrt(d_k) to keep their magnitude
     // stable before softmax and avoid softmax saturation during training.
     let scaled_scores = scores.affine(1.0 / dk.sqrt(), 0.0)?;
     println!("Scaled Scores: {:?}", scaled_scores.to_vec2::<f64>()?);
+
+    // Softmaxxed scores
+    let softmaxed = softmax(&scaled_scores, 1)?; // sofmax the target on dim 1(inner rows independently)
+    // Mock weight matrix for values(independent on x)
+    let wv = Tensor::new(&[[4., 13.], [11.2, 4.6]], &Device::Cpu)?;
+
+    let v = x.matmul(&wv)?; // Final version of attention weights
+    let av = softmaxed.matmul(&v)?; // Final value matrix produced
+
+    println!("Softmax: {:?}", softmaxed.to_vec2::<f64>()?);
+    println!("WV: {:?}", wv.to_vec2::<f64>()?);
+    println!("V: {:?}", v.to_vec2::<f64>()?);
+    println!("AV: {:?}", av.to_vec2::<f64>()?);
+
     Ok(())
 }
