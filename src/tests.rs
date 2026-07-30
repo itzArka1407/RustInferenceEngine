@@ -248,3 +248,37 @@ fn residual_connection() -> Result<()> {
 
     Ok(())
 }
+
+// Implement layer norm on a provided tensor
+fn create_layer_norm(inp: Tensor) -> Result<Tensor> {
+    // Extract the data from the input tensor
+    let mut inner_data = inp.to_vec2::<f64>()?;
+    let rows = inner_data.len();
+    let cols = inner_data[0].len(); // The no. of embeddings per token
+
+    // Mock beta and gamma values for calculation of layer norms
+    let beta = vec![0.23; cols];
+    let gamma = vec![0.469; cols];
+    let eps = 1e-5;
+
+    // Iter over all the props per token's embedding
+    for embeddings in inner_data.iter_mut() {
+        // Get the average
+        let avg = embeddings.iter().sum::<f64>() / cols as f64;
+
+        // Get the variance
+        let variance = embeddings.iter().map(|x| (*x - avg).powi(2)).sum::<f64>() / cols as f64;
+        let denom = (eps + variance).sqrt();
+
+        // Normalize each element
+        for (idx, embed) in embeddings.iter_mut().enumerate() {
+            *embed = gamma[idx] * (*embed - avg) / denom + beta[idx];
+        }
+    }
+
+    // Inner data is Vec<Vec<f64>> -- it can't be made into a Tensor in this format because Tensor
+    // accepts: [[f64; N]; M] -- but the internal vec cannot be extracted
+    // So, flat out the memory layout(doesn't change it) -- then convert it in tensor creation
+    let inner_data = inner_data.into_iter().flatten().collect();
+    Ok(Tensor::from_vec(inner_data, (rows, cols), &Device::Cpu)?)
+}
