@@ -210,6 +210,7 @@ fn softmaxed_attention_scores() -> Result<()> {
     Ok(())
 }
 
+// Implement FFN with GeLU
 #[test]
 fn ffn_with_gelu() -> Result<()> {
     // Mock input and first ffn weight to convert to higher dimensional embedding per token
@@ -222,7 +223,6 @@ fn ffn_with_gelu() -> Result<()> {
         &[[0.4, 0.8], [0.2, 0.1], [0.9, 0.5], [0.3, 0.7]],
         &Device::Cpu,
     )?; // Final mock ffn weight to convert back to original token embedding dimensions
-
     let output = activated.matmul(&w2)?;
 
     println!("Input: {:?}", x.to_vec2::<f64>()?);
@@ -230,6 +230,21 @@ fn ffn_with_gelu() -> Result<()> {
     println!("Activated: {:?}", activated.to_vec2::<f64>()?);
     println!("Output: {:?}", output.to_vec2::<f64>()?);
     println!("Gelu Output: {:?}", output.to_vec2::<f64>()?);
+
+    Ok(())
+}
+
+// Implement a residual addition over the FFN output
+#[test]
+fn residual_connection() -> Result<()> {
+    let x = Tensor::new(&[[1., 2.], [3., 4.]], &Device::Cpu)?; // Mock input(FFN Output)
+    // Final attention score -- after complete computation(matmul with value weight matrix)
+    let attention_score = Tensor::new(&[[0.5, -0.2], [0.1, 0.8]], &Device::Cpu)?;
+    let residual = (&x + &attention_score)?;
+
+    println!("Input: {:?}", x.to_vec2::<f64>()?);
+    println!("Block: {:?}", attention_score.to_vec2::<f64>()?);
+    println!("Residual: {:?}", residual.to_vec2::<f64>()?);
 
     Ok(())
 }
