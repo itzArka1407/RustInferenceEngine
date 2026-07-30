@@ -1,6 +1,6 @@
 use anyhow::Result;
 use candle_core::{Device, Tensor};
-use candle_nn::ops::softmax;
+use candle_nn::{Activation, Module, ops::softmax};
 
 #[test]
 fn test_tensors() -> anyhow::Result<()> {
@@ -206,6 +206,30 @@ fn softmaxed_attention_scores() -> Result<()> {
     println!("WV: {:?}", wv.to_vec2::<f64>()?);
     println!("V: {:?}", v.to_vec2::<f64>()?);
     println!("AV: {:?}", av.to_vec2::<f64>()?);
+
+    Ok(())
+}
+
+#[test]
+fn ffn_with_gelu() -> Result<()> {
+    // Mock input and first ffn weight to convert to higher dimensional embedding per token
+    let x = Tensor::new(&[[1., 4.], [0.2, 0.4]], &Device::Cpu)?;
+    let w1 = Tensor::new(&[[0.5, 0.3, 0.2, 0.8], [0.1, 0.7, 0.9, 0.4]], &Device::Cpu)?;
+    let expanded = x.matmul(&w1)?; // The expanded format -- fed to GeLU
+
+    let activated = Activation::Gelu.forward(&expanded)?;
+    let w2 = Tensor::new(
+        &[[0.4, 0.8], [0.2, 0.1], [0.9, 0.5], [0.3, 0.7]],
+        &Device::Cpu,
+    )?; // Final mock ffn weight to convert back to original token embedding dimensions
+
+    let output = activated.matmul(&w2)?;
+
+    println!("Input: {:?}", x.to_vec2::<f64>()?);
+    println!("Expanded: {:?}", expanded.to_vec2::<f64>()?);
+    println!("Activated: {:?}", activated.to_vec2::<f64>()?);
+    println!("Output: {:?}", output.to_vec2::<f64>()?);
+    println!("Gelu Output: {:?}", output.to_vec2::<f64>()?);
 
     Ok(())
 }
