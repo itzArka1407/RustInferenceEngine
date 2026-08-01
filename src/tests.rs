@@ -160,12 +160,8 @@ fn query_key_value() -> Result<()> {
 
 // NOTE: The following metrics used for attention scores are fairly large, doesn't happen irl --
 // used to track the variation of attention weights based on attention scores
-
 // Mock demonstration of attention scores calculation
-fn attention_scores() -> Result<(Tensor, Tensor, Tensor)> {
-    // Mock input -- each inner array is an embedded data of an input token
-    let x = Tensor::new(&[[1., 2.], [3., 4.]], &Device::Cpu)?;
-
+fn self_attention(x: &Tensor) -> Result<Tensor> {
     // Mock weights of query and key
     let wq = Tensor::new(&[[5., 6.], [2., 1.]], &Device::Cpu)?;
     let wk = Tensor::new(&[[1.3, 3.2], [5.21, 9.33]], &Device::Cpu)?;
@@ -177,22 +173,18 @@ fn attention_scores() -> Result<(Tensor, Tensor, Tensor)> {
     // multiplication(no change in data)
     let attention_scores = q.matmul(&k.transpose(0, 1)?)?;
 
-    println!("Q: {:?}", q.to_vec2::<f64>()?);
-    println!("K: {:?}", k.to_vec2::<f64>()?);
-    println!("A: {:?}", attention_scores.to_vec2::<f64>()?);
+    println!("[ATTENTION] Q: {:?}", q.to_vec2::<f64>()?);
+    println!("[ATTENTION] K: {:?}", k.to_vec2::<f64>()?);
+    println!("[ATTENTION] A: {:?}", attention_scores.to_vec2::<f64>()?);
 
-    Ok((x, q, attention_scores))
-}
-
-// Apply softmaxing on attention scores
-#[test]
-fn softmaxed_attention_scores() -> Result<()> {
-    let (x, q, scores) = attention_scores()?;
     let dk = q.dims2()?.1 as f64; // Get the no. of embeddings' per token value
     // Scale attention scores by 1/sqrt(d_k) to keep their magnitude
     // stable before softmax and avoid softmax saturation during training.
-    let scaled_scores = scores.affine(1.0 / dk.sqrt(), 0.0)?;
-    println!("Scaled Scores: {:?}", scaled_scores.to_vec2::<f64>()?);
+    let scaled_scores = attention_scores.affine(1.0 / dk.sqrt(), 0.0)?;
+    println!(
+        "[ATTENTION] Scaled Scores: {:?}",
+        scaled_scores.to_vec2::<f64>()?
+    );
 
     // Softmaxxed scores
     let softmaxed = softmax(&scaled_scores, 1)?; // sofmax the target on dim 1(inner rows independently)
@@ -200,21 +192,26 @@ fn softmaxed_attention_scores() -> Result<()> {
     let wv = Tensor::new(&[[4., 13.], [11.2, 4.6]], &Device::Cpu)?;
 
     let v = x.matmul(&wv)?; // Final version of attention weights
-    let av = softmaxed.matmul(&v)?; // Final value matrix produced
+    let attention_output = softmaxed.matmul(&v)?; // Final value matrix produced
 
-    println!("Softmax: {:?}", softmaxed.to_vec2::<f64>()?);
-    println!("WV: {:?}", wv.to_vec2::<f64>()?);
-    println!("V: {:?}", v.to_vec2::<f64>()?);
-    println!("AV: {:?}", av.to_vec2::<f64>()?);
+    println!("[ATTENTION] Softmax: {:?}", softmaxed.to_vec2::<f64>()?);
+    println!("[ATTENTION] WV: {:?}", wv.to_vec2::<f64>()?);
+    println!("[ATTENTION] V: {:?}", v.to_vec2::<f64>()?);
+    println!("[ATTENTION] AV: {:?}", attention_output.to_vec2::<f64>()?);
 
-    Ok(())
+    let wo = Tensor::new(&[[0.3, 0.8], [0.6, 0.1]], &Device::Cpu)?;
+    let projected = attention_output.matmul(&wo)?;
+    println!(
+        "[ATTENTION] Final Projection: {:?}",
+        projected.to_vec2::<f64>()?
+    );
+
+    Ok(projected)
 }
 
 // Implement FFN with GeLU
-#[test]
-fn ffn_with_gelu() -> Result<()> {
+fn ffn_with_gelu(x: &Tensor) -> Result<Tensor> {
     // Mock input and first ffn weight to convert to higher dimensional embedding per token
-    let x = Tensor::new(&[[1., 4.], [0.2, 0.4]], &Device::Cpu)?;
     let w1 = Tensor::new(&[[0.5, 0.3, 0.2, 0.8], [0.1, 0.7, 0.9, 0.4]], &Device::Cpu)?;
     let expanded = x.matmul(&w1)?; // The expanded format -- fed to GeLU
 
@@ -225,32 +222,31 @@ fn ffn_with_gelu() -> Result<()> {
     )?; // Final mock ffn weight to convert back to original token embedding dimensions
     let output = activated.matmul(&w2)?;
 
-    println!("Input: {:?}", x.to_vec2::<f64>()?);
-    println!("Expanded: {:?}", expanded.to_vec2::<f64>()?);
-    println!("Activated: {:?}", activated.to_vec2::<f64>()?);
-    println!("Output: {:?}", output.to_vec2::<f64>()?);
-    println!("Gelu Output: {:?}", output.to_vec2::<f64>()?);
+    println!("[FFN_WITH_GELU] Final Input: {:?}", x.to_vec2::<f64>()?);
+    println!("[FFN_WITH_GELU] Expanded: {:?}", expanded.to_vec2::<f64>()?);
+    println!(
+        "[FFN_WITH_GELU] Activated: {:?}",
+        activated.to_vec2::<f64>()?
+    );
+    println!("[FFN_WITH_GELU] Output: {:?}", output.to_vec2::<f64>()?);
+    println!(
+        "[FFN_WITH_GELU] Gelu Output: {:?}",
+        output.to_vec2::<f64>()?
+    );
 
-    Ok(())
+    Ok(output)
 }
 
 // Implement a residual addition over the FFN output
-#[test]
-fn residual_connection() -> Result<()> {
-    let x = Tensor::new(&[[1., 2.], [3., 4.]], &Device::Cpu)?; // Mock input(FFN Output)
-    // Final attention score -- after complete computation(matmul with value weight matrix)
-    let attention_score = Tensor::new(&[[0.5, -0.2], [0.1, 0.8]], &Device::Cpu)?;
-    let residual = (&x + &attention_score)?;
+fn residual_addition(x: &mut Tensor, second_mat: &Tensor) -> Result<()> {
+    *x = (&*x + second_mat)?;
 
-    println!("Input: {:?}", x.to_vec2::<f64>()?);
-    println!("Block: {:?}", attention_score.to_vec2::<f64>()?);
-    println!("Residual: {:?}", residual.to_vec2::<f64>()?);
-
+    println!("[RESIDUE] Input after Addition: {:?}", x.to_vec2::<f64>()?);
     Ok(())
 }
 
 // Implement layer norm on a provided tensor
-fn create_layer_norm(inp: Tensor) -> Result<Tensor> {
+fn create_layer_norm(inp: &Tensor) -> Result<Tensor> {
     // Extract the data from the input tensor
     let mut inner_data = inp.to_vec2::<f64>()?;
     let rows = inner_data.len();
@@ -281,4 +277,19 @@ fn create_layer_norm(inp: Tensor) -> Result<Tensor> {
     // So, flat out the memory layout(doesn't change it) -- then convert it in tensor creation
     let inner_data = inner_data.into_iter().flatten().collect();
     Ok(Tensor::from_vec(inner_data, (rows, cols), &Device::Cpu)?)
+}
+
+// Mimics a simplified calculation of a transformer
+#[test]
+fn transformer_block() -> Result<()> {
+    let x = Tensor::new(&[[1., 2.], [3., 4.]], &Device::Cpu)?;
+    let mut x = create_layer_norm(&x)?; // Create the normalized tensor
+    let attention = self_attention(&x)?; // Get the (query, attention scores)
+    residual_addition(&mut x, &attention)?; // Get the residual addition result
+
+    let mut x = create_layer_norm(&x)?; // Create a new layer normalization result
+    let ffn_output = ffn_with_gelu(&x)?; // Apply ffn with gelu over the new input
+    residual_addition(&mut x, &ffn_output)?; // Add the residue over the ffn result
+
+    Ok(())
 }
