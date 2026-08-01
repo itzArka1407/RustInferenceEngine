@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use anyhow::Result;
 use candle_core::{Device, Tensor};
 use candle_nn::{Activation, Module, ops::softmax};
@@ -158,17 +160,41 @@ fn query_key_value() -> Result<()> {
     Ok(())
 }
 
+// ====== Contributing to building the transformer block =====================
+
+struct TransformerBlock {
+    // SELF-ATTENTION
+    wq: Tensor, // Weight of queries
+    wk: Tensor, // Weight of keys
+    wv: Tensor, // Weight of value
+    wo: Tensor, // Final projection weight
+
+    // FFN
+    ffn1: Tensor, // Expander weight to perform ffn
+    ffn2: Tensor, // Compressor weight after computation from expanded form
+
+    // Layer normalization -- used metrics
+    beta: Vec<f64>,
+    gamma: Vec<f64>,
+}
+const EMBEDDINGS_PER_TOKEN: usize = 2; // No of embedding features per token
+const EPS: f64 = 1e-5; // EPS used during normaliztion
+static TRANSFORMER: OnceLock<TransformerBlock> = OnceLock::new();
+
+// Helper MACRO to refer to the global transformer block
+macro_rules! TRANS {
+    () => {
+        TRANSFORMER.get().unwrap()
+    };
+}
+
 // NOTE: The following metrics used for attention scores are fairly large, doesn't happen irl --
 // used to track the variation of attention weights based on attention scores
 // Mock demonstration of attention scores calculation
 fn self_attention(x: &Tensor) -> Result<Tensor> {
-    // Mock weights of query and key
-    let wq = Tensor::new(&[[5., 6.], [2., 1.]], &Device::Cpu)?;
-    let wk = Tensor::new(&[[1.3, 3.2], [5.21, 9.33]], &Device::Cpu)?;
-
     // Get the query and key
-    let q = x.matmul(&wq)?;
-    let k = x.matmul(&wk)?;
+    let q = x.matmul(&TRANS!().wq)?;
+    let k = x.matmul(&TRANS!().wk)?;
     // Attention Scores(A) = Q*K(transpose) -- transpose to convert the dimensions to allow
     // multiplication(no change in data)
     let attention_scores = q.matmul(&k.transpose(0, 1)?)?;
@@ -188,19 +214,15 @@ fn self_attention(x: &Tensor) -> Result<Tensor> {
 
     // Softmaxxed scores
     let softmaxed = softmax(&scaled_scores, 1)?; // sofmax the target on dim 1(inner rows independently)
-    // Mock weight matrix for values(independent on x)
-    let wv = Tensor::new(&[[4., 13.], [11.2, 4.6]], &Device::Cpu)?;
-
-    let v = x.matmul(&wv)?; // Final version of attention weights
+    let v = x.matmul(&TRANS!().wv)?; // Final version of attention weights
     let attention_output = softmaxed.matmul(&v)?; // Final value matrix produced
 
     println!("[ATTENTION] Softmax: {:?}", softmaxed.to_vec2::<f64>()?);
-    println!("[ATTENTION] WV: {:?}", wv.to_vec2::<f64>()?);
+    println!("[ATTENTION] WV: {:?}", TRANS!().wv.to_vec2::<f64>()?);
     println!("[ATTENTION] V: {:?}", v.to_vec2::<f64>()?);
     println!("[ATTENTION] AV: {:?}", attention_output.to_vec2::<f64>()?);
 
-    let wo = Tensor::new(&[[0.3, 0.8], [0.6, 0.1]], &Device::Cpu)?;
-    let projected = attention_output.matmul(&wo)?;
+    let projected = attention_output.matmul(&TRANS!().wo)?;
     println!(
         "[ATTENTION] Final Projection: {:?}",
         projected.to_vec2::<f64>()?
@@ -212,15 +234,10 @@ fn self_attention(x: &Tensor) -> Result<Tensor> {
 // Implement FFN with GeLU
 fn ffn_with_gelu(x: &Tensor) -> Result<Tensor> {
     // Mock input and first ffn weight to convert to higher dimensional embedding per token
-    let w1 = Tensor::new(&[[0.5, 0.3, 0.2, 0.8], [0.1, 0.7, 0.9, 0.4]], &Device::Cpu)?;
-    let expanded = x.matmul(&w1)?; // The expanded format -- fed to GeLU
+    let expanded = x.matmul(&TRANS!().ffn1)?; // The expanded format -- fed to GeLU
 
     let activated = Activation::Gelu.forward(&expanded)?;
-    let w2 = Tensor::new(
-        &[[0.4, 0.8], [0.2, 0.1], [0.9, 0.5], [0.3, 0.7]],
-        &Device::Cpu,
-    )?; // Final mock ffn weight to convert back to original token embedding dimensions
-    let output = activated.matmul(&w2)?;
+    let output = activated.matmul(&TRANS!().ffn2)?;
 
     println!("[FFN_WITH_GELU] Final Input: {:?}", x.to_vec2::<f64>()?);
     println!("[FFN_WITH_GELU] Expanded: {:?}", expanded.to_vec2::<f64>()?);
@@ -250,25 +267,20 @@ fn create_layer_norm(inp: &Tensor) -> Result<Tensor> {
     // Extract the data from the input tensor
     let mut inner_data = inp.to_vec2::<f64>()?;
     let rows = inner_data.len();
-    let cols = inner_data[0].len(); // The no. of embeddings per token
-
-    // Mock beta and gamma values for calculation of layer norms
-    let beta = vec![0.23; cols];
-    let gamma = vec![0.469; cols];
-    let eps = 1e-5;
 
     // Iter over all the props per token's embedding
     for embeddings in inner_data.iter_mut() {
         // Get the average
-        let avg = embeddings.iter().sum::<f64>() / cols as f64;
+        let avg = embeddings.iter().sum::<f64>() / EMBEDDINGS_PER_TOKEN as f64;
 
         // Get the variance
-        let variance = embeddings.iter().map(|x| (*x - avg).powi(2)).sum::<f64>() / cols as f64;
-        let denom = (eps + variance).sqrt();
+        let variance = embeddings.iter().map(|x| (*x - avg).powi(2)).sum::<f64>()
+            / EMBEDDINGS_PER_TOKEN as f64;
+        let denom = (EPS + variance).sqrt();
 
         // Normalize each element
         for (idx, embed) in embeddings.iter_mut().enumerate() {
-            *embed = gamma[idx] * (*embed - avg) / denom + beta[idx];
+            *embed = TRANS!().gamma[idx] * (*embed - avg) / denom + TRANS!().beta[idx];
         }
     }
 
@@ -276,12 +288,30 @@ fn create_layer_norm(inp: &Tensor) -> Result<Tensor> {
     // accepts: [[f64; N]; M] -- but the internal vec cannot be extracted
     // So, flat out the memory layout(doesn't change it) -- then convert it in tensor creation
     let inner_data = inner_data.into_iter().flatten().collect();
-    Ok(Tensor::from_vec(inner_data, (rows, cols), &Device::Cpu)?)
+    Ok(Tensor::from_vec(
+        inner_data,
+        (rows, EMBEDDINGS_PER_TOKEN),
+        &Device::Cpu,
+    )?)
 }
 
 // Mimics a simplified calculation of a transformer
 #[test]
-fn transformer_block() -> Result<()> {
+fn create_transformer_block() -> Result<()> {
+    _ = TRANSFORMER.set(TransformerBlock {
+        wq: Tensor::new(&[[5., 6.], [2., 1.]], &Device::Cpu)?,
+        wk: Tensor::new(&[[1.3, 3.2], [5.21, 9.33]], &Device::Cpu)?,
+        wv: Tensor::new(&[[4., 13.], [11.2, 4.6]], &Device::Cpu)?,
+        wo: Tensor::new(&[[0.3, 0.8], [0.6, 0.1]], &Device::Cpu)?,
+        ffn1: Tensor::new(&[[0.5, 0.3, 0.2, 0.8], [0.1, 0.7, 0.9, 0.4]], &Device::Cpu)?,
+        ffn2: Tensor::new(
+            &[[0.4, 0.8], [0.2, 0.1], [0.9, 0.5], [0.3, 0.7]],
+            &Device::Cpu,
+        )?,
+        beta: vec![0.23; EMBEDDINGS_PER_TOKEN],
+        gamma: vec![0.49; EMBEDDINGS_PER_TOKEN],
+    });
+
     let x = Tensor::new(&[[1., 2.], [3., 4.]], &Device::Cpu)?;
     let mut x = create_layer_norm(&x)?; // Create the normalized tensor
     let attention = self_attention(&x)?; // Get the (query, attention scores)
