@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::{mem::MaybeUninit, sync::OnceLock};
 
 use anyhow::Result;
 use candle_core::{Device, Tensor};
@@ -162,12 +162,18 @@ fn query_key_value() -> Result<()> {
 
 // ====== Contributing to building the transformer block =====================
 
-struct TransformerBlock {
-    // SELF-ATTENTION
+const N_HEADS: usize = 2; // No of heads for self-attention
+
+struct AttentionHead {
     wq: Tensor, // Weight of queries
     wk: Tensor, // Weight of keys
     wv: Tensor, // Weight of value
-    wo: Tensor, // Final projection weight
+}
+
+struct TransformerBlock {
+    // SELF-ATTENTION
+    heads: [AttentionHead; N_HEADS], // The heads used for computation
+    wo: Tensor,                      // Final projection weight
 
     // FFN
     ffn1: Tensor, // Expander weight to perform ffn
@@ -192,37 +198,63 @@ macro_rules! TRANS {
 // used to track the variation of attention weights based on attention scores
 // Mock demonstration of attention scores calculation
 fn self_attention(x: &Tensor) -> Result<Tensor> {
-    // Get the query and key
-    let q = x.matmul(&TRANS!().wq)?;
-    let k = x.matmul(&TRANS!().wk)?;
-    // Attention Scores(A) = Q*K(transpose) -- transpose to convert the dimensions to allow
-    // multiplication(no change in data)
-    let attention_scores = q.matmul(&k.transpose(0, 1)?)?;
+    // Stores the tensors containing attention value per head
+    let mut attention_values: Vec<Tensor> = Vec::with_capacity(N_HEADS);
 
-    println!("[ATTENTION] Q: {:?}", q.to_vec2::<f64>()?);
-    println!("[ATTENTION] K: {:?}", k.to_vec2::<f64>()?);
-    println!("[ATTENTION] A: {:?}", attention_scores.to_vec2::<f64>()?);
+    for (idx, head) in TRANS!().heads.iter().enumerate() {
+        // Get the query and key
+        let q = x.matmul(&head.wq)?;
+        let k = x.matmul(&head.wk)?;
 
-    let dk = q.dims2()?.1 as f64; // Get the no. of embeddings' per token value
-    // Scale attention scores by 1/sqrt(d_k) to keep their magnitude
-    // stable before softmax and avoid softmax saturation during training.
-    let scaled_scores = attention_scores.affine(1.0 / dk.sqrt(), 0.0)?;
-    println!(
-        "[ATTENTION] Scaled Scores: {:?}",
-        scaled_scores.to_vec2::<f64>()?
-    );
+        // Attention Scores(A) = Q*K(transpose) -- transpose to convert the dimensions to allow
+        // multiplication(no change in data)
+        let attention_score = q.matmul(&k.transpose(0, 1)?)?;
 
-    // Softmaxxed scores
-    let softmaxed = softmax(&scaled_scores, 1)?; // sofmax the target on dim 1(inner rows independently)
-    let v = x.matmul(&TRANS!().wv)?; // Final version of attention weights
-    let attention_output = softmaxed.matmul(&v)?; // Final value matrix produced
+        println!("[ATTENTION HEAD]: {} Q: {:?}", idx, q.to_vec2::<f64>()?);
+        println!("[ATTENTION HEAD]: {} K: {:?}", idx, k.to_vec2::<f64>()?);
+        println!(
+            "[ATTENTION HEAD]: {} A: {:?}",
+            idx,
+            attention_score.to_vec2::<f64>()?
+        );
 
-    println!("[ATTENTION] Softmax: {:?}", softmaxed.to_vec2::<f64>()?);
-    println!("[ATTENTION] WV: {:?}", TRANS!().wv.to_vec2::<f64>()?);
-    println!("[ATTENTION] V: {:?}", v.to_vec2::<f64>()?);
-    println!("[ATTENTION] AV: {:?}", attention_output.to_vec2::<f64>()?);
+        // Scale attention scores by 1/sqrt(d_k) to keep their magnitude
+        // stable before softmax and avoid softmax saturation during training.
+        let scaled_score =
+            attention_score.affine(1.0 / ((EMBEDDINGS_PER_TOKEN / N_HEADS) as f64).sqrt(), 0.0)?;
+        println!(
+            "[ATTENTION HEAD]: {} Scaled Scores: {:?}",
+            idx,
+            scaled_score.to_vec2::<f64>()?
+        );
 
-    let projected = attention_output.matmul(&TRANS!().wo)?;
+        // Softmaxxed scores
+        let softmaxed = softmax(&scaled_score, 1)?; // sofmax the target on dim 1(inner rows independently)
+        let v = x.matmul(&head.wv)?; // Final version of attention weights
+        let attention_output = softmaxed.matmul(&v)?; // Final value matrix produced
+
+        println!(
+            "[ATTENTION HEAD]: {} Softmax: {:?}",
+            idx,
+            softmaxed.to_vec2::<f64>()?
+        );
+        println!(
+            "[ATTENTION HEAD]: {} WV: {:?}",
+            idx,
+            head.wv.to_vec2::<f64>()?
+        );
+        println!("[ATTENTION HEAD]: {} V: {:?}", idx, v.to_vec2::<f64>()?);
+        println!(
+            "[ATTENTION HEAD]: {} AV: {:?}",
+            idx,
+            attention_output.to_vec2::<f64>()?
+        );
+
+        attention_values.push(attention_output);
+    }
+
+    let combined_attention_output = Tensor::cat(&attention_values, 1)?;
+    let projected = combined_attention_output.matmul(&TRANS!().wo)?;
     println!(
         "[ATTENTION] Final Projection: {:?}",
         projected.to_vec2::<f64>()?
@@ -298,10 +330,19 @@ fn create_layer_norm(inp: &Tensor) -> Result<Tensor> {
 // Mimics a simplified calculation of a transformer
 #[test]
 fn create_transformer_block() -> Result<()> {
+    let mut blank_data = [const { MaybeUninit::<AttentionHead>::uninit() }; N_HEADS];
+    for idx in 0..N_HEADS {
+        blank_data[idx].write(AttentionHead {
+            wq: Tensor::new(&[[5.], [2.]], &Device::Cpu).unwrap(),
+            wk: Tensor::new(&[[1.3], [5.21]], &Device::Cpu).unwrap(),
+            wv: Tensor::new(&[[4.], [11.2]], &Device::Cpu).unwrap(),
+        });
+    }
+    // All memory blocks are updated, treat it as a stable type now
+    let heads: [AttentionHead; N_HEADS] = unsafe { std::mem::transmute(blank_data) };
+
     _ = TRANSFORMER.set(TransformerBlock {
-        wq: Tensor::new(&[[5., 6.], [2., 1.]], &Device::Cpu)?,
-        wk: Tensor::new(&[[1.3, 3.2], [5.21, 9.33]], &Device::Cpu)?,
-        wv: Tensor::new(&[[4., 13.], [11.2, 4.6]], &Device::Cpu)?,
+        heads,
         wo: Tensor::new(&[[0.3, 0.8], [0.6, 0.1]], &Device::Cpu)?,
         ffn1: Tensor::new(&[[0.5, 0.3, 0.2, 0.8], [0.1, 0.7, 0.9, 0.4]], &Device::Cpu)?,
         ffn2: Tensor::new(
