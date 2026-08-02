@@ -212,16 +212,11 @@ fn self_attention(x: &Tensor) -> Result<Tensor> {
 
         println!("[ATTENTION HEAD]: {} Q: {:?}", idx, q.to_vec2::<f64>()?);
         println!("[ATTENTION HEAD]: {} K: {:?}", idx, k.to_vec2::<f64>()?);
-        println!(
-            "[ATTENTION HEAD]: {} A: {:?}",
-            idx,
-            attention_score.to_vec2::<f64>()?
-        );
+        println!("[ATTENTION HEAD]: {} A: {:?}", idx, attention_score.to_vec2::<f64>()?);
 
         // Scale attention scores by 1/sqrt(d_k) to keep their magnitude
         // stable before softmax and avoid softmax saturation during training.
-        let scaled_score =
-            attention_score.affine(1.0 / ((EMBEDDINGS_PER_TOKEN / N_HEADS) as f64).sqrt(), 0.0)?;
+        let scaled_score = attention_score.affine(1.0 / ((EMBEDDINGS_PER_TOKEN / N_HEADS) as f64).sqrt(), 0.0)?;
         println!(
             "[ATTENTION HEAD]: {} Scaled Scores: {:?}",
             idx,
@@ -233,32 +228,17 @@ fn self_attention(x: &Tensor) -> Result<Tensor> {
         let v = x.matmul(&head.wv)?; // Final version of attention weights
         let attention_output = softmaxed.matmul(&v)?; // Final value matrix produced
 
-        println!(
-            "[ATTENTION HEAD]: {} Softmax: {:?}",
-            idx,
-            softmaxed.to_vec2::<f64>()?
-        );
-        println!(
-            "[ATTENTION HEAD]: {} WV: {:?}",
-            idx,
-            head.wv.to_vec2::<f64>()?
-        );
+        println!("[ATTENTION HEAD]: {} Softmax: {:?}", idx, softmaxed.to_vec2::<f64>()?);
+        println!("[ATTENTION HEAD]: {} WV: {:?}", idx, head.wv.to_vec2::<f64>()?);
         println!("[ATTENTION HEAD]: {} V: {:?}", idx, v.to_vec2::<f64>()?);
-        println!(
-            "[ATTENTION HEAD]: {} AV: {:?}",
-            idx,
-            attention_output.to_vec2::<f64>()?
-        );
+        println!("[ATTENTION HEAD]: {} AV: {:?}", idx, attention_output.to_vec2::<f64>()?);
 
         attention_values.push(attention_output);
     }
 
     let combined_attention_output = Tensor::cat(&attention_values, 1)?;
     let projected = combined_attention_output.matmul(&TRANS!().wo)?;
-    println!(
-        "[ATTENTION] Final Projection: {:?}",
-        projected.to_vec2::<f64>()?
-    );
+    println!("[ATTENTION] Final Projection: {:?}", projected.to_vec2::<f64>()?);
 
     Ok(projected)
 }
@@ -273,15 +253,9 @@ fn ffn_with_gelu(x: &Tensor) -> Result<Tensor> {
 
     println!("[FFN_WITH_GELU] Final Input: {:?}", x.to_vec2::<f64>()?);
     println!("[FFN_WITH_GELU] Expanded: {:?}", expanded.to_vec2::<f64>()?);
-    println!(
-        "[FFN_WITH_GELU] Activated: {:?}",
-        activated.to_vec2::<f64>()?
-    );
+    println!("[FFN_WITH_GELU] Activated: {:?}", activated.to_vec2::<f64>()?);
     println!("[FFN_WITH_GELU] Output: {:?}", output.to_vec2::<f64>()?);
-    println!(
-        "[FFN_WITH_GELU] Gelu Output: {:?}",
-        output.to_vec2::<f64>()?
-    );
+    println!("[FFN_WITH_GELU] Gelu Output: {:?}", output.to_vec2::<f64>()?);
 
     Ok(output)
 }
@@ -306,8 +280,7 @@ fn create_layer_norm(inp: &Tensor) -> Result<Tensor> {
         let avg = embeddings.iter().sum::<f64>() / EMBEDDINGS_PER_TOKEN as f64;
 
         // Get the variance
-        let variance = embeddings.iter().map(|x| (*x - avg).powi(2)).sum::<f64>()
-            / EMBEDDINGS_PER_TOKEN as f64;
+        let variance = embeddings.iter().map(|x| (*x - avg).powi(2)).sum::<f64>() / EMBEDDINGS_PER_TOKEN as f64;
         let denom = (EPS + variance).sqrt();
 
         // Normalize each element
@@ -345,10 +318,7 @@ fn create_transformer_block() -> Result<()> {
         heads,
         wo: Tensor::new(&[[0.3, 0.8], [0.6, 0.1]], &Device::Cpu)?,
         ffn1: Tensor::new(&[[0.5, 0.3, 0.2, 0.8], [0.1, 0.7, 0.9, 0.4]], &Device::Cpu)?,
-        ffn2: Tensor::new(
-            &[[0.4, 0.8], [0.2, 0.1], [0.9, 0.5], [0.3, 0.7]],
-            &Device::Cpu,
-        )?,
+        ffn2: Tensor::new(&[[0.4, 0.8], [0.2, 0.1], [0.9, 0.5], [0.3, 0.7]], &Device::Cpu)?,
         beta: vec![0.23; EMBEDDINGS_PER_TOKEN],
         gamma: vec![0.49; EMBEDDINGS_PER_TOKEN],
     });
